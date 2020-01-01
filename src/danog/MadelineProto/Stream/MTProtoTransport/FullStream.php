@@ -10,20 +10,22 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto\Stream\MTProtoTransport;
 
 use Amp\Promise;
+use Amp\Socket\EncryptableSocket;
 use danog\MadelineProto\Stream\Async\BufferedStream;
 use danog\MadelineProto\Stream\BufferedStreamInterface;
 use danog\MadelineProto\Stream\Common\HashedBufferedStream;
 use danog\MadelineProto\Stream\ConnectionContext;
 use danog\MadelineProto\Stream\MTProtoBufferInterface;
+use danog\MadelineProto\Stream\RawStreamInterface;
 
 /**
  * TCP full stream wrapper.
@@ -73,13 +75,13 @@ class FullStream implements BufferedStreamInterface, MTProtoBufferInterface
      *
      * @return Generator
      */
-    public function getWriteBufferAsync(int $length, string $append = ''): \Generator
+    public function getWriteBufferGenerator(int $length, string $append = ''): \Generator
     {
         $this->stream->startWriteHash();
         $this->stream->checkWriteHash($length + 8);
         $buffer = yield $this->stream->getWriteBuffer($length + 12, $append);
         $this->out_seq_no++;
-        $buffer->bufferWrite(pack('VV', $length + 12, $this->out_seq_no));
+        $buffer->bufferWrite(\pack('VV', $length + 12, $this->out_seq_no));
 
         return $buffer;
     }
@@ -91,22 +93,41 @@ class FullStream implements BufferedStreamInterface, MTProtoBufferInterface
      *
      * @return Generator
      */
-    public function getReadBufferAsync(&$length): \Generator
+    public function getReadBufferGenerator(&$length): \Generator
     {
         $this->stream->startReadHash();
         $buffer = yield $this->stream->getReadBuffer($l);
-        $read_length = unpack('V', yield $buffer->bufferRead(4))[1];
+        $read_length = \unpack('V', yield $buffer->bufferRead(4))[1];
         $length = $read_length - 12;
         $this->stream->checkReadHash($read_length - 8);
         $this->in_seq_no++;
-        $in_seq_no = unpack('V', yield $buffer->bufferRead(4))[1];
+        $in_seq_no = \unpack('V', yield $buffer->bufferRead(4))[1];
         if ($in_seq_no != $this->in_seq_no) {
-            throw new Exception('Incoming seq_no mismatch');
+            throw new \danog\MadelineProto\Exception('Incoming seq_no mismatch');
         }
 
         return $buffer;
     }
 
+    /**
+     * {@inheritdoc}
+     *
+     * @return EncryptableSocket
+     */
+    public function getSocket(): EncryptableSocket
+    {
+        return $this->stream->getSocket();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return RawStreamInterface
+     */
+    public function getStream(): RawStreamInterface
+    {
+        return $this->stream;
+    }
     public static function getName(): string
     {
         return __CLASS__;

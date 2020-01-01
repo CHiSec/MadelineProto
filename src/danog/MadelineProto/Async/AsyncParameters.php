@@ -10,15 +10,13 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto\Async;
-
-use Amp\Success;
 
 /**
  * Async parameters class.
@@ -27,43 +25,45 @@ use Amp\Success;
  *
  * @author Daniil Gentili <daniil@daniil.it>
  */
-class AsyncParameters extends Parameters
+class AsyncParameters
 {
+    /**
+     * Async callable.
+     *
+     * @var callable
+     */
     private $callable;
-    private $refetchable = true;
 
-    public function __construct(callable $callable, bool $refetchable = true)
-    {
-        $this->callable = $callable;
-        $this->refetchable = $refetchable;
-    }
-
-    public function setRefetchable(bool $refetchable)
-    {
-        $this->refetchable = $refetchable;
-    }
-
-    public function setCallable(callable $callable)
+    /**
+     * Create async parameters.
+     *
+     * @param callable $callable Async callable that will return parameters
+     */
+    public function __construct(callable $callable)
     {
         $this->callable = $callable;
     }
 
-    public function isRefetchable(): bool
+
+    /**
+     * Create async parameters.
+     *
+     * @param callable $callable Async callable that will return parameters
+     */
+    public function setCallable(callable $callable): void
     {
-        return $this->refetchable;
+        $this->callable = $callable;
     }
 
-    public function getParameters(): \Generator
+    /**
+     * Get parameters asynchronously.
+     *
+     * @return \Generator<array>|\Amp\Promise<array>
+     */
+    public function getParameters()
     {
         $callable = $this->callable;
-        $params = $callable();
 
-        if ($params instanceof \Generator) {
-            $params = yield coroutine($params);
-        } else {
-            $params = yield new Success($params);
-        }
-
-        return $params;
+        return $callable();
     }
 }

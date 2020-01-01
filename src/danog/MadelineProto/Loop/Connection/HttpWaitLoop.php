@@ -10,19 +10,16 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto\Loop\Connection;
 
-use Amp\Success;
-use danog\MadelineProto\Logger;
+use danog\MadelineProto\Connection;
 use danog\MadelineProto\Loop\Impl\ResumableSignalLoop;
-use danog\MadelineProto\Stream\MTProtoTransport\HttpsStream;
-use danog\MadelineProto\Stream\MTProtoTransport\HttpStream;
 
 /**
  * HttpWait loop.
@@ -31,53 +28,67 @@ use danog\MadelineProto\Stream\MTProtoTransport\HttpStream;
  */
 class HttpWaitLoop extends ResumableSignalLoop
 {
-    public function loop(): \Generator
+    /**
+     * Connection instance.
+     *
+     * @var \danog\MadelineProto\Connection
+     */
+    protected $connection;
+    /**
+     * DC ID.
+     *
+     * @var string
+     */
+    protected $datacenter;
+
+    /**
+     * DataCenterConnection instance.
+     *
+     * @var \danog\MadelineProto\DataCenterConnection
+     */
+    protected $datacenterConnection;
+
+    public function __construct(Connection $connection)
+    {
+        $this->connection = $connection;
+        $this->API = $connection->getExtra();
+        $this->datacenter = $connection->getDatacenterID();
+        $this->datacenterConnection = $connection->getShared();
+    }
+
+    public function loop()
     {
         $API = $this->API;
         $datacenter = $this->datacenter;
         $connection = $this->connection;
+        $shared = $this->datacenterConnection;
 
-        if (!in_array($connection->getCtx()->getStreamName(), [HttpStream::getName(), HttpsStream::getName()])) {
-            yield new Success(0);
-
+        if (!$shared->isHttp()) {
             return;
         }
 
-        $this->startedLoop();
-        $API->logger->logger("Entered HTTP wait loop in DC {$datacenter}", Logger::ULTRA_VERBOSE);
-
-        $timeout = $API->settings['connection_settings'][isset($API->settings['connection_settings'][$datacenter]) ? $datacenter : 'all']['timeout'];
         while (true) {
-            //var_dump("http loop DC $datacenter");
-            if ($a = yield $this->waitSignal($this->pause())) {
-                $API->logger->logger('Exiting HTTP wait loop');
-                $this->exitedLoop();
-
+            if (yield $this->waitSignal($this->pause())) {
                 return;
             }
-            if (!in_array($connection->getCtx()->getStreamName(), [HttpStream::getName(), HttpsStream::getName()])) {
-                $this->exitedLoop();
-                yield new Success(0);
-
+            if (!$connection->isHttp()) {
                 return;
             }
-            while ($connection->temp_auth_key === null) {
+            while (!$shared->hasTempAuthKey()) {
                 if (yield $this->waitSignal($this->pause())) {
-                    $API->logger->logger('Exiting HTTP wait loop');
-                    $this->exitedLoop();
-
                     return;
                 }
             }
-            //if (time() - $connection->last_http_wait >= $timeout) {
-            $API->logger->logger("DC $datacenter: request {$connection->http_req_count}, response {$connection->http_res_count}");
-            if ($connection->http_req_count === $connection->http_res_count && (!empty($connection->pending_outgoing) || (!empty($connection->new_outgoing) && !$connection->hasPendingCalls()))) {
-                yield $connection->sendMessage(['_' => 'http_wait', 'body' => ['max_wait' => 30000, 'wait_after' => 0, 'max_delay' => 0], 'content_related' => true, 'unencrypted' => false, 'method' => false]);
-                //var_dump('sent wait');
+            $API->logger->logger("DC $datacenter: request {$connection->countHttpSent()}, response {$connection->countHttpReceived()}");
+            if ($connection->countHttpSent() === $connection->countHttpReceived() && (!empty($connection->pending_outgoing) || (!empty($connection->new_outgoing) && !$connection->hasPendingCalls()))) {
+                yield $connection->sendMessage(['_' => 'http_wait', 'body' => ['max_wait' => 30000, 'wait_after' => 0, 'max_delay' => 0], 'contentRelated' => true, 'unencrypted' => false, 'method' => false]);
             }
-            $API->logger->logger("DC $datacenter: request {$connection->http_req_count}, response {$connection->http_res_count}");
-
-            //($connection->last_http_wait + $timeout) - time()
+            $API->logger->logger("DC $datacenter: request {$connection->countHttpSent()}, response {$connection->countHttpReceived()}");
         }
+    }
+
+    public function __toString(): string
+    {
+        return "HTTP wait loop in DC {$this->datacenter}";
     }
 }

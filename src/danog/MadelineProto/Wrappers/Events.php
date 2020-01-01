@@ -11,26 +11,50 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto\Wrappers;
 
+use EventHandler;
+
 /**
- * Manages logging in and out.
+ * Event handler.
  */
 trait Events
 {
+    /**
+     * Event handler class name.
+     *
+     * @var string
+     */
     public $event_handler;
+    /**
+     * Event handler instance.
+     *
+     * @var \danog\MadelineProto\EventHandler
+     */
     private $event_handler_instance;
+    /**
+     * Event handler method list.
+     *
+     * @var array<string>
+     */
     private $event_handler_methods = [];
 
-    public function setEventHandler($event_handler)
+    /**
+     * Set event handler.
+     *
+     * @param string|EventHandler $event_handler Event handler
+     *
+     * @return void
+     */
+    public function setEventHandler($event_handler): void
     {
-        if (!class_exists($event_handler) || !is_subclass_of($event_handler, '\danog\MadelineProto\EventHandler')) {
+        if (!\class_exists($event_handler) || !\is_subclass_of($event_handler, '\danog\MadelineProto\EventHandler')) {
             throw new \danog\MadelineProto\Exception('Wrong event handler was defined');
         }
 
@@ -47,32 +71,45 @@ trait Events
             if ($method === 'onLoop') {
                 $this->loop_callback = [$this->event_handler_instance, 'onLoop'];
             } elseif ($method === 'onAny') {
-                foreach ($this->constructors->by_id as $id => $constructor) {
+                foreach ($this->getTL()->getConstructors()->by_id as $id => $constructor) {
                     if ($constructor['type'] === 'Update' && !isset($this->event_handler_methods[$constructor['predicate']])) {
                         $this->event_handler_methods[$constructor['predicate']] = [$this->event_handler_instance, 'onAny'];
                     }
                 }
             } else {
-                $method_name = lcfirst(substr($method, 2));
+                $method_name = \lcfirst(\substr($method, 2));
                 $this->event_handler_methods[$method_name] = [$this->event_handler_instance, $method];
             }
         }
 
-        $this->settings['updates']['callback'] = [$this, 'event_update_handler'];
+        $this->settings['updates']['callback'] = [$this, 'eventUpdateHandler'];
         $this->settings['updates']['handle_updates'] = true;
         $this->settings['updates']['run_callback'] = true;
-
-        if (isset($this->datacenter->sockets[$this->settings['connection_settings']['default_dc']]->updater)) {
-            $this->datacenter->sockets[$this->settings['connection_settings']['default_dc']]->updater->start();
+        if (!$this->asyncInitPromise) {
+            $this->startUpdateSystem();
         }
     }
 
-    public function getEventHandler()
+    /**
+     * Get event handler.
+     *
+     * @return EventHandler
+     */
+    public function getEventHandler(): EventHandler
     {
         return $this->event_handler_instance;
     }
 
-    public function event_update_handler($update)
+    /**
+     * Event update handler.
+     *
+     * @param array $update Update
+     *
+     * @return void
+     *
+     * @internal Internal event handler
+     */
+    public function eventUpdateHandler(array $update)
     {
         if (isset($this->event_handler_methods[$update['_']])) {
             return $this->event_handler_methods[$update['_']]($update);

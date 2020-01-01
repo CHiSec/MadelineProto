@@ -10,19 +10,23 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto\Stream\Proxy;
 
 use Amp\Promise;
+use Amp\Socket\ClientTlsContext;
+use Amp\Socket\EncryptableSocket;
 use danog\MadelineProto\Stream\Async\RawStream;
 use danog\MadelineProto\Stream\BufferedProxyStreamInterface;
 use danog\MadelineProto\Stream\ConnectionContext;
 use danog\MadelineProto\Stream\RawProxyStreamInterface;
+
+use danog\MadelineProto\Stream\RawStreamInterface;
 
 /**
  * HTTP proxy stream wrapper.
@@ -41,16 +45,28 @@ class HttpProxy implements RawProxyStreamInterface, BufferedProxyStreamInterface
      *
      * @return \Generator
      */
-    public function connectAsync(ConnectionContext $ctx, string $header = ''): \Generator
+    public function connectGenerator(ConnectionContext $ctx, string $header = ''): \Generator
     {
         $ctx = $ctx->getCtx();
         $uri = $ctx->getUri();
+        $secure = $ctx->isSecure();
+
+        if ($secure) {
+            $ctx->setSocketContext($ctx->getSocketContext()->withTlsContext(new ClientTlsContext($uri->getHost())));
+        }
+
         $ctx->setUri('tcp://'.$this->extra['address'].':'.$this->extra['port'])->secure(false);
 
         $this->stream = yield $ctx->getStream();
-
         $address = $uri->getHost();
         $port = $uri->getPort();
+
+        try {
+            if (\strlen(\inet_pton($address) === 16)) {
+                $address = '['.$address.']';
+            }
+        } catch (\danog\MadelineProto\Exception $e) {
+        }
 
         yield $this->stream->write("CONNECT $address:$port HTTP/1.1\r\nHost: $address:$port\r\nAccept: */*\r\n".$this->getProxyAuthHeader()."Connection: keep-Alive\r\n\r\n");
 
@@ -69,27 +85,27 @@ class HttpProxy implements RawProxyStreamInterface, BufferedProxyStreamInterface
             }
             $was_crlf = $piece === "\r\n";
         }
-        $headers = explode("\r\n", $headers);
+        $headers = \explode("\r\n", $headers);
 
-        list($protocol, $code, $description) = explode(' ', $headers[0], 3);
-        list($protocol, $protocol_version) = explode('/', $protocol);
+        list($protocol, $code, $description) = \explode(' ', $headers[0], 3);
+        list($protocol, $protocol_version) = \explode('/', $protocol);
         if ($protocol !== 'HTTP') {
             throw new \danog\MadelineProto\Exception('Wrong protocol');
         }
         $code = (int) $code;
         unset($headers[0]);
-        if (array_pop($headers).array_pop($headers) !== '') {
+        if (\array_pop($headers).\array_pop($headers) !== '') {
             throw new \danog\MadelineProto\Exception('Wrong last header');
         }
         foreach ($headers as $key => $current_header) {
             unset($headers[$key]);
-            $current_header = explode(':', $current_header, 2);
-            $headers[strtolower($current_header[0])] = trim($current_header[1]);
+            $current_header = \explode(':', $current_header, 2);
+            $headers[\strtolower($current_header[0])] = \trim($current_header[1]);
         }
 
         $close = $protocol === 'HTTP/1.0';
         if (isset($headers['connection'])) {
-            $close = strtolower($headers['connection']) === 'close';
+            $close = \strtolower($headers['connection']) === 'close';
         }
 
         if ($code !== 200) {
@@ -100,10 +116,10 @@ class HttpProxy implements RawProxyStreamInterface, BufferedProxyStreamInterface
 
             if ($close) {
                 $this->disconnect();
-                yield $this->connect($this->ctx);
+                yield $this->connect($ctx);
             }
 
-            \danog\MadelineProto\Logger::log(trim($read));
+            \danog\MadelineProto\Logger::log(\trim($read));
 
             throw new \danog\MadelineProto\Exception($description, $code);
         }
@@ -116,10 +132,14 @@ class HttpProxy implements RawProxyStreamInterface, BufferedProxyStreamInterface
             $length = (int) $headers['content-length'];
             $read = yield $buffer->bufferRead($length);
         }
+
+        if ($secure) {
+            yield $this->getSocket()->setupTls();
+        }
         \danog\MadelineProto\Logger::log('Connected to '.$address.':'.$port.' via http');
 
-        if (strlen($header)) {
-            yield (yield $this->stream->getWriteBuffer(strlen($header)))->bufferWrite($header);
+        if (\strlen($header)) {
+            yield (yield $this->stream->getWriteBuffer(\strlen($header)))->bufferWrite($header);
         }
     }
 
@@ -173,7 +193,7 @@ class HttpProxy implements RawProxyStreamInterface, BufferedProxyStreamInterface
             return '';
         }
 
-        return 'Proxy-Authorization: Basic '.base64_encode($this->extra['username'].':'.$this->extra['password'])."\r\n";
+        return 'Proxy-Authorization: Basic '.\base64_encode($this->extra['username'].':'.$this->extra['password'])."\r\n";
     }
 
     /**
@@ -188,6 +208,25 @@ class HttpProxy implements RawProxyStreamInterface, BufferedProxyStreamInterface
         $this->extra = $extra;
     }
 
+    /**
+     * {@inheritdoc}
+     *
+     * @return EncryptableSocket
+     */
+    public function getSocket(): EncryptableSocket
+    {
+        return $this->stream->getSocket();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return RawStreamInterface
+     */
+    public function getStream(): RawStreamInterface
+    {
+        return $this->stream;
+    }
     public static function getName(): string
     {
         return __CLASS__;

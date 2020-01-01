@@ -10,20 +10,25 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto\Stream\Transport;
 
+use Amp\ByteStream\ClosedException;
+use Amp\CancellationToken;
 use Amp\Promise;
+use Amp\Socket\ClientTlsContext;
+use Amp\Socket\EncryptableSocket;
 use Amp\Socket\Socket;
 use danog\MadelineProto\Stream\Async\RawStream;
+use danog\MadelineProto\Stream\ProxyStreamInterface;
 use danog\MadelineProto\Stream\RawStreamInterface;
-use function Amp\Socket\connect;
-use function Amp\Socket\cryptoConnect;
+
+use function Amp\Socket\connector;
 
 /**
  * Default stream wrapper.
@@ -32,26 +37,51 @@ use function Amp\Socket\cryptoConnect;
  *
  * @author Daniil Gentili <daniil@daniil.it>
  */
-class DefaultStream extends Socket implements RawStreamInterface
+class DefaultStream implements
+    RawStreamInterface,
+    ProxyStreamInterface
 {
     use RawStream;
+    /**
+     * Socket.
+     *
+     * @var EncryptableSocket
+     */
     private $stream;
 
-    public function enableCrypto(): Promise
+    /**
+     * Connector.
+     *
+     * @var Connector
+     */
+    private $connector;
+
+    public function setupTls(?CancellationToken $cancellationToken = null): \Amp\Promise
     {
-        return $this->stream->enableCrypto();
+        return $this->stream->setupTls($cancellationToken);
     }
 
-    public function __construct()
+    public function getStream()
     {
+        return $this->stream;
     }
 
-    public function connectAsync(\danog\MadelineProto\Stream\ConnectionContext $ctx, string $header = ''): \Generator
+    public function connectGenerator(\danog\MadelineProto\Stream\ConnectionContext $ctx, string $header = ''): \Generator
     {
-        if ($ctx->isSecure()) {
-            $this->stream = yield cryptoConnect($ctx->getStringUri(), $ctx->getSocketContext(), $ctx->getCancellationToken());
-        } else {
-            $this->stream = yield connect($ctx->getStringUri(), $ctx->getSocketContext());
+        $ctx = $ctx->getCtx();
+        $uri = $ctx->getUri();
+        $secure = $ctx->isSecure();
+        if ($secure) {
+            $ctx->setSocketContext(
+                $ctx->getSocketContext()->withTlsContext(
+                    new ClientTlsContext($uri->getHost())
+                )
+            );
+        }
+
+        $this->stream = yield ($this->connector ?? connector())->connect((string) $uri, $ctx->getSocketContext(), $ctx->getCancellationToken());
+        if ($secure) {
+            yield $this->stream->setupTls();
         }
         yield $this->stream->write($header);
     }
@@ -75,13 +105,16 @@ class DefaultStream extends Socket implements RawStreamInterface
      */
     public function write(string $data): Promise
     {
+        if (!$this->stream) {
+            throw new ClosedException("MadelineProto stream was disconnected");
+        }
         return $this->stream->write($data);
     }
 
     /**
-     * Async close.
+     * Close.
      *
-     * @return Generator
+     * @return void
      */
     public function disconnect()
     {
@@ -92,14 +125,32 @@ class DefaultStream extends Socket implements RawStreamInterface
             }
         } catch (\Throwable $e) {
             \danog\MadelineProto\Logger::log('Got exception while closing stream: '.$e->getMessage());
-        } catch (\Exception $e) {
-            \danog\MadelineProto\Logger::log('Got exception while closing stream: '.$e->getMessage());
         }
     }
 
+    /**
+     * Close.
+     *
+     * @return void
+     */
     public function close()
     {
         $this->disconnect();
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * @return EncryptableSocket
+     */
+    public function getSocket(): EncryptableSocket
+    {
+        return $this->stream;
+    }
+
+    public function setExtra($extra)
+    {
+        $this->connector = $extra;
     }
 
     public static function getName(): string

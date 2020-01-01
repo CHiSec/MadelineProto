@@ -10,35 +10,52 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto\Stream\Transport;
 
 use Amp\Promise;
-use Amp\Websocket\Handshake;
-use Amp\Websocket\Options;
-use Amp\Websocket\Rfc6455Connection;
+use Amp\Socket\EncryptableSocket;
+use Amp\Websocket\Client\Connector;
+use Amp\Websocket\Client\Handshake;
 use danog\MadelineProto\Stream\Async\RawStream;
 use danog\MadelineProto\Stream\ConnectionContext;
+use danog\MadelineProto\Stream\ProxyStreamInterface;
 use danog\MadelineProto\Stream\RawStreamInterface;
-use danog\MadelineProto\Tools;
+
+use function Amp\Websocket\Client\connector;
 
 /**
  * Websocket stream wrapper.
  *
  * @author Daniil Gentili <daniil@daniil.it>
  */
-class WsStream implements RawStreamInterface
+class WsStream implements RawStreamInterface, ProxyStreamInterface
 {
     use RawStream;
-    use Tools;
 
+    /**
+     * Websocket stream.
+     *
+     * @var Connection
+     */
     private $stream;
+    /**
+     * Websocket message.
+     *
+     * @var Message
+     */
     private $message;
+    /**
+     * Websocket Connector.
+     *
+     * @var Connector
+     */
+    private $connector;
 
     /**
      * Connect to stream.
@@ -47,28 +64,17 @@ class WsStream implements RawStreamInterface
      *
      * @return \Generator
      */
-    public function connectAsync(ConnectionContext $ctx, string $header = ''): \Generator
+    public function connectGenerator(ConnectionContext $ctx, string $header = ''): \Generator
     {
-        $this->stream = yield $ctx->getStream();
-        $handshake = new Handshake($ctx->getStringUri());
+        $this->dc = $ctx->getIntDc();
 
-        yield $this->stream->write($handshake->generateRequest());
+        $handshake = new Handshake(\str_replace('tcp://', $ctx->isSecure() ? 'wss://' : 'ws://', $ctx->getStringUri()));
 
-        $buffer = '';
-        while (($chunk = yield $this->stream->read()) !== null) {
-            $buffer .= $chunk;
-            if ($position = \strpos($buffer, "\r\n\r\n")) {
-                $headerBuffer = \substr($buffer, 0, $position + 4);
-                $buffer = \substr($buffer, $position + 4);
-                $headers = $handshake->decodeResponse($headerBuffer);
-                $this->stream = new Rfc6455Connection($this->stream, $headers, $buffer, new Options());
-                break;
-            }
+        $this->stream = yield ($this->connector ?? connector())->connect($handshake, $ctx->getCancellationToken());
+
+        if (\strlen($header)) {
+            yield $this->write($header);
         }
-        if (!$this->stream) {
-            throw new WebSocketException('Failed to read response from server');
-        }
-        yield $this->write($header);
     }
 
     /**
@@ -78,25 +84,28 @@ class WsStream implements RawStreamInterface
     {
         try {
             $this->stream->close();
-        } catch (\Amp\Websocket\ClosedException $e) {
+        } catch (\Throwable $e) {
         }
     }
 
-    public function readAsync(): \Generator
+    public function readGenerator(): \Generator
     {
         try {
-            if (!$this->message || ($data = yield $this->message->read()) === null) {
+            if (!$this->message || ($data = yield $this->message->buffer()) === null) {
                 $this->message = yield $this->stream->receive();
-                $data = yield $this->message->read();
+                if (!$this->message) {
+                    return null;
+                }
+                $data = yield $this->message->buffer();
+                $this->message = null;
             }
-        } catch (\Amp\Websocket\ClosedException $e) {
+        } catch (\Throwable $e) {
             if ($e->getReason() !== 'Client closed the underlying TCP connection') {
                 throw $e;
             }
 
             return null;
         }
-
         return $data;
     }
 
@@ -110,6 +119,22 @@ class WsStream implements RawStreamInterface
     public function write(string $data): \Amp\Promise
     {
         return $this->stream->sendBinary($data);
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * @return \Amp\Socket\Socket
+     */
+    public function getSocket(): EncryptableSocket
+    {
+        return $this->stream->getSocket();
+    }
+    public function setExtra($extra)
+    {
+        if ($extra instanceof Connector) {
+            $this->connector = $extra;
+        }
     }
 
     public static function getName(): string

@@ -11,10 +11,10 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto;
@@ -26,9 +26,10 @@ class Absolute
 {
     public static function absolute($file)
     {
-        if (($file[0] !== '/') && ($file[1] !== ':') && !in_array(substr($file, 0, 4), ['phar', 'http'])) {
+        if (($file[0] !== '/') && ($file[1] !== ':') && !\in_array(\substr($file, 0, 4), ['phar', 'http'])) {
             $file = Magic::getcwd().'/'.$file;
         }
+
         return $file;
     }
 }

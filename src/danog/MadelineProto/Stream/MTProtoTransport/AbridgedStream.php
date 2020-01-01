@@ -10,19 +10,21 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto\Stream\MTProtoTransport;
 
 use Amp\Promise;
+use Amp\Socket\EncryptableSocket;
 use danog\MadelineProto\Stream\Async\BufferedStream;
 use danog\MadelineProto\Stream\BufferedStreamInterface;
 use danog\MadelineProto\Stream\ConnectionContext;
 use danog\MadelineProto\Stream\MTProtoBufferInterface;
+use danog\MadelineProto\Stream\RawStreamInterface;
 
 /**
  * Abridged stream wrapper.
@@ -34,7 +36,6 @@ class AbridgedStream implements BufferedStreamInterface, MTProtoBufferInterface
     use BufferedStream;
 
     private $stream;
-    private $ctx;
 
     /**
      * Connect to stream.
@@ -43,10 +44,9 @@ class AbridgedStream implements BufferedStreamInterface, MTProtoBufferInterface
      *
      * @return \Generator
      */
-    public function connectAsync(ConnectionContext $ctx, string $header = ''): \Generator
+    public function connectGenerator(ConnectionContext $ctx, string $header = ''): \Generator
     {
-        $this->ctx = $ctx->getCtx();
-        $this->stream = yield $ctx->getStream(chr(239).$header);
+        $this->stream = yield $ctx->getStream(\chr(239).$header);
     }
 
     /**
@@ -66,15 +66,15 @@ class AbridgedStream implements BufferedStreamInterface, MTProtoBufferInterface
      *
      * @return \Generator
      */
-    public function getWriteBufferAsync(int $length, string $append = ''): \Generator
+    public function getWriteBufferGenerator(int $length, string $append = ''): \Generator
     {
         $length >>= 2;
         if ($length < 127) {
-            $message = chr($length);
+            $message = \chr($length);
         } else {
-            $message = chr(127).substr(pack('V', $length), 0, 3);
+            $message = \chr(127).\substr(\pack('V', $length), 0, 3);
         }
-        $buffer = yield $this->stream->getWriteBuffer(strlen($message) + $length, $append);
+        $buffer = yield $this->stream->getWriteBuffer(\strlen($message) + $length, $append);
         yield $buffer->bufferWrite($message);
 
         return $buffer;
@@ -87,18 +87,37 @@ class AbridgedStream implements BufferedStreamInterface, MTProtoBufferInterface
      *
      * @return Generator
      */
-    public function getReadBufferAsync(&$length): \Generator
+    public function getReadBufferGenerator(&$length): \Generator
     {
         $buffer = yield $this->stream->getReadBuffer($l);
-        $length = ord(yield $buffer->bufferRead(1));
+        $length = \ord(yield $buffer->bufferRead(1));
         if ($length >= 127) {
-            $length = unpack('V', (yield $buffer->bufferRead(3))."\0")[1];
+            $length = \unpack('V', (yield $buffer->bufferRead(3))."\0")[1];
         }
         $length <<= 2;
 
         return $buffer;
     }
 
+    /**
+     * {@inheritdoc}
+     *
+     * @return EncryptableSocket
+     */
+    public function getSocket(): EncryptableSocket
+    {
+        return $this->stream->getSocket();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return RawStreamInterface
+     */
+    public function getStream(): RawStreamInterface
+    {
+        return $this->stream;
+    }
     public static function getName(): string
     {
         return __CLASS__;

@@ -10,21 +10,22 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto\Stream\MTProtoTransport;
 
 use Amp\Promise;
+use Amp\Socket\EncryptableSocket;
 use Amp\Success;
 use danog\MadelineProto\Stream\Async\BufferedStream;
 use danog\MadelineProto\Stream\BufferedProxyStreamInterface;
 use danog\MadelineProto\Stream\ConnectionContext;
 use danog\MadelineProto\Stream\MTProtoBufferInterface;
-use danog\MadelineProto\Tools;
+use danog\MadelineProto\Stream\RawStreamInterface;
 
 /**
  * HTTP stream wrapper.
@@ -34,7 +35,6 @@ use danog\MadelineProto\Tools;
 class HttpStream implements MTProtoBufferInterface, BufferedProxyStreamInterface
 {
     use BufferedStream;
-    use Tools;
     private $stream;
     private $code;
     private $ctx;
@@ -53,7 +53,7 @@ class HttpStream implements MTProtoBufferInterface, BufferedProxyStreamInterface
      *
      * @return \Generator
      */
-    public function connectAsync(ConnectionContext $ctx, string $header = ''): \Generator
+    public function connectGenerator(ConnectionContext $ctx, string $header = ''): \Generator
     {
         $this->ctx = $ctx->getCtx();
         $this->stream = yield $ctx->getStream($header);
@@ -91,10 +91,10 @@ class HttpStream implements MTProtoBufferInterface, BufferedProxyStreamInterface
      *
      * @return Generator
      */
-    public function getWriteBufferAsync(int $length, string $append = ''): \Generator
+    public function getWriteBufferGenerator(int $length, string $append = ''): \Generator
     {
         $headers = 'POST '.$this->uri->getPath()." HTTP/1.1\r\nHost: ".$this->uri->getHost().':'.$this->uri->getPort()."\r\n"."Content-Type: application/x-www-form-urlencoded\r\nConnection: keep-alive\r\nKeep-Alive: timeout=100000, max=10000000\r\nContent-Length: ".$length.$this->header."\r\n\r\n";
-        $buffer = yield $this->stream->getWriteBuffer(strlen($headers) + $length, $append);
+        $buffer = yield $this->stream->getWriteBuffer(\strlen($headers) + $length, $append);
         yield $buffer->bufferWrite($headers);
 
         return $buffer;
@@ -107,7 +107,7 @@ class HttpStream implements MTProtoBufferInterface, BufferedProxyStreamInterface
      *
      * @return Generator
      */
-    public function getReadBufferAsync(&$length): \Generator
+    public function getReadBufferGenerator(&$length): \Generator
     {
         $buffer = yield $this->stream->getReadBuffer($l);
         $headers = '';
@@ -124,27 +124,27 @@ class HttpStream implements MTProtoBufferInterface, BufferedProxyStreamInterface
             }
             $was_crlf = $piece === "\r\n";
         }
-        $headers = explode("\r\n", $headers);
+        $headers = \explode("\r\n", $headers);
 
-        list($protocol, $code, $description) = explode(' ', $headers[0], 3);
-        list($protocol, $protocol_version) = explode('/', $protocol);
+        list($protocol, $code, $description) = \explode(' ', $headers[0], 3);
+        list($protocol, $protocol_version) = \explode('/', $protocol);
         if ($protocol !== 'HTTP') {
             throw new \danog\MadelineProto\Exception('Wrong protocol');
         }
         $code = (int) $code;
         unset($headers[0]);
-        if (array_pop($headers).array_pop($headers) !== '') {
+        if (\array_pop($headers).\array_pop($headers) !== '') {
             throw new \danog\MadelineProto\Exception('Wrong last header');
         }
         foreach ($headers as $key => $current_header) {
             unset($headers[$key]);
-            $current_header = explode(':', $current_header, 2);
-            $headers[strtolower($current_header[0])] = trim($current_header[1]);
+            $current_header = \explode(':', $current_header, 2);
+            $headers[\strtolower($current_header[0])] = \trim($current_header[1]);
         }
 
         $close = $protocol === 'HTTP/1.0';
         if (isset($headers['connection'])) {
-            $close = strtolower($headers['connection']) === 'close';
+            $close = \strtolower($headers['connection']) === 'close';
         }
 
         if ($code !== 200) {
@@ -160,7 +160,7 @@ class HttpStream implements MTProtoBufferInterface, BufferedProxyStreamInterface
 
             \danog\MadelineProto\Logger::log($read);
 
-            $this->code = $this->pack_signed_int(-$code);
+            $this->code = \danog\MadelineProto\Tools::packSignedInt(-$code);
             $length = 4;
 
             return $this;
@@ -180,6 +180,25 @@ class HttpStream implements MTProtoBufferInterface, BufferedProxyStreamInterface
     public function bufferRead(int $length): Promise
     {
         return new Success($this->code);
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * @return EncryptableSocket
+     */
+    public function getSocket(): EncryptableSocket
+    {
+        return $this->stream->getSocket();
+    }
+    /**
+     * {@inheritDoc}
+     *
+     * @return RawStreamInterface
+     */
+    public function getStream(): RawStreamInterface
+    {
+        return $this->stream;
     }
 
     public static function getName(): string

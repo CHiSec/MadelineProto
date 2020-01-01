@@ -11,10 +11,10 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto;
@@ -33,13 +33,21 @@ abstract class CombinedEventHandler
 
     final public function __sleep()
     {
-        $keys = method_exists($this, '__magic_sleep') ? $this->__magic_sleep() : get_object_vars($this);
+        $keys = \method_exists($this, '__magic_sleep') ? $this->__magic_sleep() : \get_object_vars($this);
         unset($keys['CombinedAPI']);
-        foreach ($this->CombinedAPI->instance_paths as $path) {
-            unset($keys[$path]);
+        if (isset($this->CombinedAPI) && $this->CombinedAPI instanceof CombinedAPI) {
+            foreach ($this->CombinedAPI->instance_paths as $path) {
+                unset($keys[$path]);
+            }
+        } else {
+            foreach ($keys as $key => $value) {
+                if ($value instanceof API && $key === $value->session) {
+                    unset($keys[$key]);
+                }
+            }
         }
 
-        return array_keys($keys);
+        return \array_keys($keys);
     }
 
     final public function referenceInstance($path)

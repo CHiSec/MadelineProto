@@ -11,10 +11,10 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto\TL\Types;
@@ -22,6 +22,7 @@ namespace danog\MadelineProto\TL\Types;
 class Button implements \JsonSerializable, \ArrayAccess
 {
     use \danog\Serializable;
+    use \danog\MadelineProto\Tools;
     private $info = [];
     private $data = [];
 
@@ -38,20 +39,31 @@ class Button implements \JsonSerializable, \ArrayAccess
         return ['data', 'info'];
     }
 
-    public function click($donotwait = false)
+    public function click($donotwait = false, $params = [])
     {
+        if (\is_array($donotwait)) {
+            $params = $donotwait;
+            $donotwait = false;
+        }
+        $async = $params['async'] ?? (isset($this->info['API']->wrapper) ? $this->info['API']->wrapper->async : true);
+        $method = $donotwait ? 'methodCallAsyncWrite' : 'methodCallAsyncRead';
         switch ($this->data['_']) {
             default:
                 return false;
             case 'keyboardButtonUrl':
                 return $this->data['url'];
             case 'keyboardButton':
-                return $this->info['API']->method_call('messages.sendMessage', ['peer' => $this->info['peer'], 'message' => $this->data['text'], 'reply_to_msg_id' => $this->info['id']], ['datacenter' => $this->info['API']->datacenter->curdc]);
+                $res = $this->info['API']->methodCallAsyncRead('messages.sendMessage', ['peer' => $this->info['peer'], 'message' => $this->data['text'], 'reply_to_msg_id' => $this->info['id']], ['datacenter' => $this->info['API']->datacenter->curdc]);
+                break;
             case 'keyboardButtonCallback':
-                return $this->info['API']->method_call('messages.getBotCallbackAnswer', ['peer' => $this->info['peer'], 'msg_id' => $this->info['id'], 'data' => $this->data['data']], ['noResponse' => $donotwait, 'datacenter' => $this->info['API']->datacenter->curdc]);
+                $res = $this->info['API']->$method('messages.getBotCallbackAnswer', ['peer' => $this->info['peer'], 'msg_id' => $this->info['id'], 'data' => $this->data['data']], ['datacenter' => $this->info['API']->datacenter->curdc]);
+                break;
             case 'keyboardButtonGame':
-                return $this->info['API']->method_call('messages.getBotCallbackAnswer', ['peer' => $this->info['peer'], 'msg_id' => $this->info['id'], 'game' => true], ['noResponse' => $donotwait, 'datacenter' => $this->info['API']->datacenter->curdc]);
+                $res = $this->info['API']->$method('messages.getBotCallbackAnswer', ['peer' => $this->info['peer'], 'msg_id' => $this->info['id'], 'game' => true], ['datacenter' => $this->info['API']->datacenter->curdc]);
+                break;
         }
+
+        return $async ? $res : \danog\MadelineProto\Tools::wait($res);
     }
 
     public function __debugInfo()

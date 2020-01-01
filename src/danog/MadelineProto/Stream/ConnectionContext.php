@@ -10,19 +10,20 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto\Stream;
 
 use Amp\CancellationToken;
-use Amp\Promise;
-use Amp\Socket\ClientConnectContext;
+use Amp\Socket\ConnectContext;
 use Amp\Uri\Uri;
-use function Amp\call;
+use danog\MadelineProto\Exception;
+use danog\MadelineProto\Stream\MTProtoTransport\ObfuscatedStream;
+use danog\MadelineProto\Stream\Transport\DefaultStream;
 
 /**
  * Connection context class.
@@ -47,15 +48,33 @@ class ConnectionContext
      */
     private $test = false;
     /**
+     * Whether to use media servers.
+     *
+     * @var bool
+     */
+    private $media = false;
+    /**
+     * Whether to use CDN servers.
+     *
+     * @var bool
+     */
+    private $cdn = false;
+    /**
      * The connection URI.
      *
      * @var \Amp\Uri\Uri
      */
     private $uri;
     /**
+     * Whether this connection context will be used by the DNS client.
+     *
+     * @var bool
+     */
+    private $isDns = false;
+    /**
      * Socket context.
      *
-     * @var \Amp\Socket\ClientConnectionContext
+     * @var \Amp\Socket\ConnectContext
      */
     private $socketContext;
     /**
@@ -90,13 +109,20 @@ class ConnectionContext
     private $key = 0;
 
     /**
+     * Read callback.
+     *
+     * @var callable
+     */
+    private $readCallback;
+
+    /**
      * Set the socket context.
      *
-     * @param ClientConnectContext $socketContext
+     * @param ConnectContext $socketContext
      *
      * @return self
      */
-    public function setSocketContext(ClientConnectContext $socketContext): self
+    public function setSocketContext(ConnectContext $socketContext): self
     {
         $this->socketContext = $socketContext;
 
@@ -106,9 +132,9 @@ class ConnectionContext
     /**
      * Get the socket context.
      *
-     * @return ClientConnectContext
+     * @return ConnectContext
      */
-    public function getSocketContext(): ClientConnectContext
+    public function getSocketContext(): ConnectContext
     {
         return $this->socketContext;
     }
@@ -170,11 +196,19 @@ class ConnectionContext
     {
         return $this->cancellationToken;
     }
-
     /**
-     * Set the secure boolean.
+     * Return a clone of the current connection context.
      *
-     * @param bool $secure
+     * @return self
+     */
+    public function getCtx(): self
+    {
+        return clone $this;
+    }
+    /**
+     * Set the test boolean.
+     *
+     * @param bool $test
      *
      * @return self
      */
@@ -186,7 +220,7 @@ class ConnectionContext
     }
 
     /**
-     * Whether to use TLS with socket connections.
+     * Whether this is a test connection.
      *
      * @return bool
      */
@@ -194,7 +228,47 @@ class ConnectionContext
     {
         return $this->test;
     }
+    /**
+     * Whether this is a media connection.
+     *
+     * @return bool
+     */
+    public function isMedia(): bool
+    {
+        return $this->media;
+    }
 
+    /**
+     * Whether this is a CDN connection.
+     *
+     * @return bool
+     */
+    public function isCDN(): bool
+    {
+        return $this->cdn;
+    }
+
+    /**
+     * Whether this connection context will only be used by the DNS client.
+     *
+     * @return bool
+     */
+    public function isDns(): bool
+    {
+        return $this->isDns;
+    }
+
+    /**
+     * Whether this connection context will only be used by the DNS client.
+     *
+     * @param boolean $isDns
+     * @return self
+     */
+    public function setIsDns(bool $isDns): self
+    {
+        $this->isDns = $isDns;
+        return $this;
+    }
     /**
      * Set the secure boolean.
      *
@@ -228,7 +302,13 @@ class ConnectionContext
      */
     public function setDc($dc): self
     {
+        $int = \intval($dc);
+        if (!(1 <= $int && $int <= 1000)) {
+            throw new Exception("Invalid DC id provided: $dc");
+        }
         $this->dc = $dc;
+        $this->media = \strpos($dc, '_media') !== false;
+        $this->cdn = \strpos($dc, '_cdn') !== false;
 
         return $this;
     }
@@ -250,11 +330,11 @@ class ConnectionContext
      */
     public function getIntDc()
     {
-        $dc = intval($this->dc);
+        $dc = \intval($this->dc);
         if ($this->test) {
             $dc += 10000;
         }
-        if (strpos($this->dc, '_media')) {
+        if ($this->media) {
             $dc = -$dc;
         }
 
@@ -286,16 +366,6 @@ class ConnectionContext
     }
 
     /**
-     * Set the ipv6 boolean.
-     *
-     * @return self
-     */
-    public function getCtx(): self
-    {
-        return clone $this;
-    }
-
-    /**
      * Add a stream to the stream chain.
      *
      * @param string $streamName
@@ -306,9 +376,41 @@ class ConnectionContext
     public function addStream(string $streamName, $extra = null): self
     {
         $this->nextStreams[] = [$streamName, $extra];
-        $this->key = count($this->nextStreams) - 1;
+        $this->key = \count($this->nextStreams) - 1;
 
         return $this;
+    }
+
+    /**
+     * Set read callback, called every time the socket reads at least a byte.
+     *
+     * @param callback $callable Read callback
+     *
+     * @return void
+     */
+    public function setReadCallback($callable)
+    {
+        $this->readCallback = $callable;
+    }
+
+    /**
+     * Check if a read callback is present.
+     *
+     * @return boolean
+     */
+    public function hasReadCallback(): bool
+    {
+        return $this->readCallback !== null;
+    }
+
+    /**
+     * Get read callback.
+     *
+     * @return callable
+     */
+    public function getReadCallback()
+    {
+        return $this->readCallback;
     }
 
     /**
@@ -322,13 +424,20 @@ class ConnectionContext
     }
 
     /**
-     * Get a stream from the stream chain.
+     * Check if has stream within stream chain.
      *
-     * @return Promise
+     * @param string $stream Stream name
+     *
+     * @return boolean
      */
-    public function getStream(string $buffer = ''): Promise
+    public function hasStreamName(string $stream): bool
     {
-        return call([$this, 'getStreamAsync'], $buffer);
+        foreach ($this->nextStreams as list($name)) {
+            if ($name === $stream) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -338,7 +447,7 @@ class ConnectionContext
      *
      * @return \Generator
      */
-    public function getStreamAsync(string $buffer = ''): \Generator
+    public function getStream(string $buffer = ''): \Generator
     {
         list($clazz, $extra) = $this->nextStreams[$this->key--];
         $obj = new $clazz();
@@ -350,6 +459,23 @@ class ConnectionContext
         return $obj;
     }
 
+
+    /**
+     * Get the inputClientProxy proxy MTProto object.
+     *
+     * @return array
+     */
+    public function getInputClientProxy(): ?array
+    {
+        foreach ($this->nextStreams as $couple) {
+            list($streamName, $extra) = $couple;
+            if ($streamName === ObfuscatedStream::getName() && isset($extra['address'])) {
+                $extra['_'] = 'inputClientProxy';
+                return $extra;
+            }
+        }
+        return null;
+    }
     /**
      * Get a description "name" of the context.
      *
@@ -361,18 +487,19 @@ class ConnectionContext
         if ($this->isSecure()) {
             $string .= ' (TLS)';
         }
+        $string .= $this->isTest() ? ' test' : ' main';
         $string .= ' DC ';
         $string .= $this->getDc();
         $string .= ', via ';
         $string .= $this->getIpv6() ? 'ipv6' : 'ipv4';
         $string .= ' using ';
-        foreach (array_reverse($this->nextStreams) as $k => $stream) {
+        foreach (\array_reverse($this->nextStreams) as $k => $stream) {
             if ($k) {
                 $string .= ' => ';
             }
-            $string .= preg_replace('/.*\\\\/', '', $stream[0]);
-            if ($stream[1]) {
-                $string .= ' ('.json_encode($stream[1]).')';
+            $string .= \preg_replace('/.*\\\\/', '', $stream[0]);
+            if ($stream[1] && $stream[0] !== DefaultStream::getName()) {
+                $string .= ' ('.\json_encode($stream[1]).')';
             }
         }
 

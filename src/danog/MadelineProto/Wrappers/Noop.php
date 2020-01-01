@@ -11,25 +11,37 @@
  * If not, see <http://www.gnu.org/licenses/>.
  *
  * @author    Daniil Gentili <daniil@daniil.it>
- * @copyright 2016-2018 Daniil Gentili <daniil@daniil.it>
+ * @copyright 2016-2019 Daniil Gentili <daniil@daniil.it>
  * @license   https://opensource.org/licenses/AGPL-3.0 AGPLv3
  *
- * @link      https://docs.madelineproto.xyz MadelineProto documentation
+ * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
 namespace danog\MadelineProto\Wrappers;
 
 trait Noop
 {
-    public function setNoop()
+    /**
+     * Set NOOP update handler, ignoring all updates.
+     *
+     * @return void
+     */
+    public function setNoop(): void
     {
         $this->settings['updates']['callback'] = [$this, 'noop'];
         $this->settings['updates']['run_callback'] = false;
         $this->settings['updates']['handle_updates'] = true;
-        $this->datacenter->sockets[$this->settings['connection_settings']['default_dc']]->updater->start();
+        $this->startUpdateSystem();
     }
 
-    public function noop()
+    /**
+     * Noop update handler.
+     *
+     * @internal
+     *
+     * @return void
+     */
+    public function noop(): void
     {
     }
 }
